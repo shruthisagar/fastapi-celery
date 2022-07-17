@@ -1,0 +1,97 @@
+x-api:
+  &build-common
+  build: .
+  volumes: 
+    - .:/app:cached
+  
+  env_file: ./.env
+  environment:
+    &api-env-common
+    DB_HOST: database
+    DB_PORT: 5432
+    DB_NAME: my_database
+    DB_USER: postgres
+    DB_PASS: default
+    REDIS_HOST: redis
+    KIND: api
+  tty: true
+volumes:
+  db-data:
+  rabbitmq:
+  
+services:
+  database:
+    image: postgres:alpine
+    ports:
+      - 0.0.0.0:5432:5432
+    environment:
+      POSTGRES_DB: "my_database"
+      POSTGRES_PASSWORD: "default"
+    volumes:
+      - db-data:/var/lib/postgresql/database
+    
+  rabbitmq:
+    image:  rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    ports:
+      - 0.0.0.0:5672:5672
+      - 0.0.0.0:15672:15672
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+  
+  redis:
+    image: redis:alpine
+
+  migrate-db:
+    <<: *build-common
+    command: 
+      - aerich
+      - upgrade
+    depends_on:
+      - database
+  
+  api_gateway:
+    <<: *build-common
+    command:
+      - uvicorn
+      - app:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "80"
+      - --reload
+    ports:
+      - 0.0.0.0:8080:80
+    depends_on:
+      - migrate-db
+    
+
+  celery_scheduler:
+    <<: *build-common
+    depends_on:
+      - rabbitmq
+    environment:
+      <<: *api-env-common
+      KIND: celery_scheduler
+  
+  celery_worker:
+    <<: *build-common
+    depends_on:
+      - rabbitmq
+      - api_gateway
+    environment:
+      <<: *api-env-common
+      KIND: celery_worker
+  
+  celery_flower:
+    <<: *build-common
+    depends_on:
+      - rabbitmq
+      - celery_scheduler
+      - celery_worker
+    ports:
+      - 0.0.0.0:5555:5555
+    environment:
+      KIND: celery_flower
+
+
